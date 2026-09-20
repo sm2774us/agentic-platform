@@ -31,6 +31,7 @@ gates, containerization, and branch-protected CI).
   - [Windows 11 (WSL2 + Ubuntu)](#windows-11-wsl2--ubuntu-recommended)
   - [Ubuntu (native / bare metal / VM)](#ubuntu-native--bare-metal--vm)
   - [Troubleshooting quick reference](#troubleshooting-quick-reference)
+- [Sample Run (a taste of what this repo does)](#sample-run-a-taste-of-what-this-repo-does)
 - [Project layout](#project-layout)
 - [Running the service](#running-the-service)
 - [Testing, linting, type-checking](#testing-linting-type-checking)
@@ -48,23 +49,23 @@ gates, containerization, and branch-protected CI).
 ## Architecture
 
 ```
-                         ┌─────────────────────────┐
+                         ┌───────────────────────────┐
                          │   FastAPI Service Layer   │
                          │  /healthz /readyz /v1/*   │
-                         └────────────┬─────────────┘
+                         └────────────┬──────────────┘
                                       │
-                         ┌────────────▼─────────────┐
+                         ┌────────────▼───────────────┐
                          │      AgenticPipeline       │  orchestration/pipeline.py
                          │  (facade: wires everything)│
-                         └────────────┬─────────────┘
+                         └────────────┬───────────────┘
                                       │
         ┌─────────────────────────────┼─────────────────────────────┐
         │                             │                             │
-┌───────▼────────┐          ┌─────────▼─────────┐          ┌────────▼────────┐
-│  Multi-Agent     │          │   Hybrid RAG        │          │  Tool Registry   │
-│  Graph (Simple-  │◄────────►│   Pipeline           │          │  (audited, HITL-  │
-│  Graph engine,   │  context │   (dense + lexical   │          │  gated for        │
-│  LangGraph-shaped│          │   retrieval)         │          │  sensitive ops)   │
+┌───────▼──────────┐          ┌───────▼──────────────┐          ┌───▼──────────────┐
+│  Multi-Agent     │          │   Hybrid RAG         │          │  Tool Registry   │
+│  Graph (Simple-  │◄────────►│   Pipeline           │          │  (audited, HITL- │
+│  Graph engine,   │  context │   (dense + lexical   │          │  gated for       │
+│  LangGraph-shaped│          │   retrieval)         │          │  sensitive ops)  │
 │  API)            │          └──────────────────────┘          └──────────────────┘
 │                  │
 │  supervisor      │
@@ -77,13 +78,13 @@ gates, containerization, and branch-protected CI).
 └──────────────────┘
         │
         ▼
-┌──────────────────┐        ┌──────────────────────┐
-│  Evaluation Gate   │───────►│  MLflow Run Tracker    │
-│  groundedness,     │        │  (experiment lineage,  │
-│  hallucination,    │        │   metrics per run)      │
-│  safety, cost,      │        └──────────────────────┘
-│  latency            │
-└──────────────────┘
+┌────────────────────┐        ┌───────────────────────┐
+│  Evaluation Gate   │───────►│  MLflow Run Tracker   │
+│  groundedness,     │        │  (experiment lineage, │
+│  hallucination,    │        │   metrics per run)    │
+│  safety, cost,     │        └───────────────────────┘
+│  latency           │
+└────────────────────┘
         │
         ▼
    PASS / NEEDS_HUMAN_REVIEW / REJECT
@@ -360,6 +361,143 @@ published 3.13 wheels yet), fall back to 3.12.
 | WSL2: `pytest` is very slow | You likely cloned the repo under `/mnt/c/...`. Move it into the Linux filesystem (`~/projects/...`) instead — see Note A above. |
 | `curl` on Windows gives a syntax/parameter error | Use `curl.exe` explicitly, not bare `curl` (which PowerShell aliases to `Invoke-WebRequest`). |
 | Port 8000 already in use | Run on a different port: `uvicorn agentic_platform.api.main:app --port 8001`. |
+
+## Sample Run (a taste of what this repo does)
+
+Once you've completed [Getting Started](#getting-started-complete-no-prior-setup-assumed)
+and have `(.venv)` active, this section walks through three real, copy-pasteable
+examples — no API keys needed, since the default configuration runs on a
+fully offline, deterministic mock LLM. Every command below and its output
+was captured directly from a real run of this codebase.
+
+### 1. Start the API and ask it a question
+
+```bash
+make run    # or: uvicorn agentic_platform.api.main:app --port 8000
+```
+
+In a second terminal:
+
+```bash
+curl -X POST http://localhost:8000/v1/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{"task": "what is the refund policy"}'
+```
+
+```json
+{
+  "final_answer": "Refunds are processed within five business days of approval.",
+  "verdict": "pass",
+  "requires_human_review": false,
+  "scores": {
+    "groundedness": 1.0,
+    "hallucination_risk": 0.0,
+    "safety": 1.0,
+    "latency_ms": 0.66,
+    "cost_usd": 0.0003
+  }
+}
+```
+
+Behind that one HTTP call, the full multi-agent graph ran end-to-end:
+`supervisor` planned the task, `researcher` pulled the matching chunk out of
+the seeded knowledge base via `HybridRetriever` and logged a
+`search_knowledge_base` tool call, `writer` drafted an answer, and
+`reviewer` checked it was actually grounded in retrieved context before
+letting it through. The `verdict: "pass"` and `groundedness: 1.0` are the
+`eval` framework's automated quality gate — not a rubber stamp.
+
+### 2. See the safety gate catch an *ungrounded* answer
+
+Ask about something with no matching document in the knowledge base — the
+same pipeline, running in Python directly this time to show the full
+verdict object:
+
+```python
+from agentic_platform.config.settings import Settings
+from agentic_platform.orchestration.llm_client import MockLLMClient
+from agentic_platform.orchestration.pipeline import AgenticPipeline
+
+settings = Settings(max_agent_turns=3)
+pipeline = AgenticPipeline(settings=settings, llm=MockLLMClient(settings))
+# note: no seed_knowledge_base() call -- nothing to ground an answer in
+
+result = pipeline.run("What's our policy on quantum-teleported refunds?")
+print(result.state.final_answer)
+print(result.verdict.verdict.value)
+print(result.verdict.scores)
+print(result.verdict.reasons)
+```
+
+Real output:
+
+```
+[mock-response] acknowledged: Task: What's our policy on quantum-teleported refunds?
+Context: no context retri...
+needs_human_review
+EvalScores(groundedness=0.3, hallucination_risk=0.7, safety=1.0, latency_ms=1.39, cost_usd=0.00028)
+('hallucination risk exceeds threshold',)
+```
+
+With nothing in the knowledge base to ground the answer, the eval gate
+automatically flags the response as `needs_human_review` — exactly the
+behavior you want before shipping an LLM answer to a real customer. This
+is the same gate a real Anthropic/OpenAI-backed `LLMClient` goes through
+once you [wire one in](#extending-to-a-real-llm-provider); nothing about
+the safety check changes.
+
+### 3. See the human-in-the-loop gate block a sensitive tool call
+
+```python
+from agentic_platform.tools.registry import default_tool_registry, HumanApprovalRequiredError
+
+registry = default_tool_registry()
+try:
+    registry.invoke("apply_schema_migration", migration_id="0007_add_refund_reason_column")
+except HumanApprovalRequiredError as exc:
+    print("blocked:", exc)
+print(registry.audit_log)
+```
+
+Real output:
+
+```
+blocked: Tool 'apply_schema_migration' is sensitive and requires human approval
+({'tool': 'apply_schema_migration', 'args': {'migration_id': '0007_add_refund_reason_column'}, 'status': 'blocked_pending_review'},)
+```
+
+The call is refused *and* logged to the audit trail — nothing silently
+fails. Passing `human_approved=True` (which a real approval workflow would
+set only after an actual human signs off) lets it through.
+
+### Where to go from here (how you'd improve on this)
+
+The three examples above are intentionally minimal so you can see the
+whole system move in under a minute. Realistic next steps, roughly in the
+order a new contributor would hit them:
+
+1. **Swap the mock LLM for a real one.** Everything above ran on
+   `MockLLMClient`. See [Extending to a real LLM provider](#extending-to-a-real-llm-provider)
+   — it's a ~20-line class implementing one method, no other file changes.
+2. **Add real documents to the knowledge base.** `pipeline.seed_knowledge_base({...})`
+   takes any `dict[str, str]`; point it at your own docs instead of the
+   two-sentence examples here. See skill `add-rag-source` in
+   `.agents/skills/` for the full playbook (chunking, hybrid retrieval
+   tuning, provenance).
+3. **Add a new agent node** (e.g. a fact-checker or summarizer step) —
+   see skill `add-agent-node`. The graph is intentionally small so this is
+   a good first contribution to try.
+4. **Swap the reference RAG/eval components for production-grade ones**:
+   a real embedding model + vector DB behind `HybridRetriever` (interface
+   unchanged), an LLM-judge-based groundedness scorer behind `evaluate_run`
+   (signature unchanged), MLflow's real tracking backend instead of
+   `NullRunTracker`. See the [Roadmap](#roadmap) for the full list.
+5. **Try it with an AI coding agent.** This repo ships pre-wired for
+   Claude Code, GitHub Copilot, and OpenAI Codex — see
+   [AI-assisted development setup](#ai-assisted-development-setup). Ask
+   whichever tool you're using "add a new agent node that translates the
+   final answer into Spanish" and watch it follow the `add-agent-node`
+   skill automatically.
 
 ## Project layout
 
