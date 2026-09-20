@@ -15,6 +15,8 @@ import re
 import tomllib
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -86,6 +88,7 @@ def test_hook_script_is_executable_and_blocks_destructive_commands() -> None:
     hook_path = REPO_ROOT / "scripts" / "hooks" / "guard-sensitive-commands.sh"
     assert hook_path.is_file()
     import os
+    import shutil
     import stat
     import subprocess
 
@@ -105,15 +108,39 @@ def test_hook_script_is_executable_and_blocks_destructive_commands() -> None:
     # understood natively by both Windows and POSIX shells.
     hook_path_posix = hook_path.as_posix()
 
+    bash_path = shutil.which("bash")
+    if bash_path is None:  # pragma: no cover - CI (Ubuntu) always has a real bash
+        pytest.skip("no bash on PATH -- native Windows cmd.exe without Git Bash/WSL")
+
+    # A `bash` resolved on PATH is not necessarily a usable POSIX shell: Windows
+    # ships a legacy launcher shim at C:\Windows\System32\bash.exe whenever the
+    # "Windows Subsystem for Linux" optional feature is enabled -- even with no
+    # distro installed or intended for use. That shim reinterprets its argv
+    # inside its own Linux filesystem, so a real Windows path like
+    # "C:/Users/x/repo/script.sh" doesn't exist from its point of view, and every
+    # invocation fails with a misleading "No such file or directory". Probe for
+    # that here rather than letting the real check below fail confusingly.
+    probe = subprocess.run(
+        [bash_path, "-c", f"test -f '{hook_path_posix}'"],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode != 0:  # pragma: no cover - CI (Ubuntu) always has a real bash
+        pytest.skip(
+            "bash on PATH cannot see this repo at its own path -- likely the "
+            "legacy WSL bash.exe launcher shim, not a real POSIX shell; skipping "
+            "the subprocess-based hook check on this native Windows environment"
+        )
+
     blocked = subprocess.run(
-        ["bash", hook_path_posix, "rm -rf / --no-preserve-root"],
+        [bash_path, hook_path_posix, "rm -rf / --no-preserve-root"],
         capture_output=True,
         check=False,
     )
     assert blocked.returncode != 0
 
     allowed = subprocess.run(
-        ["bash", hook_path_posix, "pytest -q"],
+        [bash_path, hook_path_posix, "pytest -q"],
         capture_output=True,
         check=False,
     )

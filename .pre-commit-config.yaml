@@ -5,13 +5,22 @@ repos:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.13.0
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic>=2.9, pydantic-settings>=2.6, types-PyYAML]
-        args: [--config-file=pyproject.toml]
-        files: ^src/
+        name: mypy (project virtualenv)
+        # Deliberately NOT the mirrors-mypy repo hook: that hook creates its own
+        # isolated virtualenv containing only `additional_dependencies`, which
+        # never sees fastapi/structlog/tenacity/etc. installed in the project's
+        # own .venv -- causing spurious "Cannot find implementation or library
+        # stub" errors locally even though `mypy src` (what CI runs) is clean.
+        # `language: system` calls whatever `mypy` is already on PATH -- i.e.
+        # the activated project .venv's mypy -- matching CI exactly.
+        entry: mypy
+        language: system
+        types_or: [python, pyi]
+        args: ["src"]
+        pass_filenames: false
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
