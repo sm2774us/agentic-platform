@@ -1,0 +1,13 @@
+# Codex project-level config. Merges only when this repo is marked
+# trust_level = "trusted" under [projects.'<path>'] in ~/.codex/config.toml.
+# Verify with `codex mcp list` from the repo root after first run.
+
+project_doc_max_bytes = 131072  # raise Codex's default 32 KiB AGENTS.md truncation limit
+
+[mcp_servers.filesystem]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "."]
+
+[mcp_servers.fetch]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-fetch"]
