@@ -483,6 +483,7 @@ in Anthropic:
 import anthropic
 from agentic_platform.orchestration.llm_client import LLMClient, LLMResponse
 
+
 class AnthropicLLMClient:
     def __init__(self, settings: Settings) -> None:
         self._client = anthropic.Anthropic()
@@ -490,8 +491,10 @@ class AnthropicLLMClient:
 
     def complete(self, prompt: str, *, system: str | None = None) -> LLMResponse:
         msg = self._client.messages.create(
-            model=self._model, max_tokens=1024,
-            system=system or "", messages=[{"role": "user", "content": prompt}],
+            model=self._model,
+            max_tokens=1024,
+            system=system or "",
+            messages=[{"role": "user", "content": prompt}],
         )
         return LLMResponse(
             text=msg.content[0].text,
@@ -517,7 +520,9 @@ graph.add_node("researcher", researcher)
 graph.add_node("writer", writer)
 graph.add_node("reviewer", reviewer)
 graph.set_entry_point("supervisor")
-graph.add_conditional_edges("supervisor", route_after_supervisor, {"researcher": "researcher", END: END})
+graph.add_conditional_edges(
+    "supervisor", route_after_supervisor, {"researcher": "researcher", END: END}
+)
 graph.add_edge("researcher", "writer")
 graph.add_edge("writer", "reviewer")
 graph.add_edge("reviewer", END)

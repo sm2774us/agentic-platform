@@ -67,7 +67,8 @@ def readyz(pipeline: AgenticPipeline = Depends(get_pipeline)) -> dict[str, str]:
 
 @app.post("/v1/agent/run", response_model=TaskResponse)
 def run_agent(
-    request: TaskRequest, pipeline: AgenticPipeline = Depends(get_pipeline)  # noqa: B008
+    request: TaskRequest,
+    pipeline: AgenticPipeline = Depends(get_pipeline),  # noqa: B008
 ) -> TaskResponse:
     try:
         result = pipeline.run(request.task)

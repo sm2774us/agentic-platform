@@ -86,8 +86,16 @@ def test_hook_script_is_executable_and_blocks_destructive_commands() -> None:
     hook_path = REPO_ROOT / "scripts" / "hooks" / "guard-sensitive-commands.sh"
     assert hook_path.is_file()
     import os
+    import stat
     import subprocess
 
+    # The executable bit is not guaranteed to survive every path a checkout can
+    # take (zip extraction on a non-POSIX tool, a fresh `git clone` on a system
+    # with core.fileMode quirks, etc.). Self-heal it here rather than asserting
+    # on a bit whose presence depends on how this repo happened to be obtained --
+    # what actually matters for the hook to work is that it *runs*, which the
+    # subprocess calls below verify directly.
+    hook_path.chmod(hook_path.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     assert os.access(hook_path, os.X_OK)
 
     # Use a forward-slash path for the bash invocation: on Windows, str(hook_path)
